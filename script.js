@@ -46,6 +46,8 @@ const state = {
     h: 0,
     cx: 0,
     cy: 0,
+    slopeSideY: 0,
+    slopeCenterY: 0,
     outerR: 0,
     ringOuterR: 0,
     faceR: 0,
@@ -104,11 +106,6 @@ function randomBetween(min, max) {
 function angleToTheta(deg) {
   const t = (deg + 90) / 180;
   return Math.PI + t * Math.PI;
-}
-
-function pseudoRandom(index, seed) {
-  const x = Math.sin(index * 127.1 + seed * 311.7) * 43758.5453123;
-  return x - Math.floor(x);
 }
 
 function initAudio() {
@@ -243,15 +240,17 @@ function measureWheel() {
   state.wheel.w = rect.width;
   state.wheel.h = rect.height;
   state.wheel.cx = rect.width / 2;
-  // Push wheel center near the bottom edge so the lower half naturally sits
-  // outside the visible frame, matching the physical board look.
-  state.wheel.cy = rect.height * 0.965;
-  state.wheel.outerR = Math.min(rect.width * 0.43, rect.height * 0.9);
-  state.wheel.ringOuterR = state.wheel.outerR * 0.94;
-  state.wheel.faceR = state.wheel.outerR * 0.81;
-  state.wheel.hubR = state.wheel.faceR * 0.13;
+  state.wheel.cy = rect.height * 0.525;
+  state.wheel.outerR = Math.min(rect.width * 0.45, rect.height * 0.44);
+  state.wheel.ringOuterR = state.wheel.outerR * 0.92;
+  state.wheel.faceR = state.wheel.outerR * 0.84;
+  state.wheel.hubR = state.wheel.faceR * 0.2;
   state.wheel.targetInnerR = state.wheel.hubR * 1.08;
-  state.wheel.targetOuterR = state.wheel.faceR * 0.93;
+  state.wheel.targetOuterR = state.wheel.faceR * 0.95;
+  state.wheel.slopeCenterY = state.wheel.cy;
+  state.wheel.slopeSideY = state.wheel.cy - state.wheel.faceR * 0.26;
+  const spindleLength = clamp(state.wheel.faceR * 0.8, 120, state.wheel.faceR - 14);
+  const spindleWidth = clamp(state.wheel.faceR * 0.03, 7, 11);
 
   el.wheelShell.style.setProperty("--face-radius", `${state.wheel.faceR}px`);
   el.wheelShell.style.setProperty("--face-radius-px", `${state.wheel.faceR}px`);
@@ -262,6 +261,23 @@ function measureWheel() {
     `${(state.wheel.cy / rect.height) * 100}%`
   );
   el.wheelShell.style.setProperty("--pivot-y-px", `${state.wheel.cy}px`);
+  el.wheelShell.style.setProperty(
+    "--slope-side-y-px",
+    `${state.wheel.slopeSideY}px`
+  );
+  el.wheelShell.style.setProperty(
+    "--slope-center-y-px",
+    `${state.wheel.slopeCenterY}px`
+  );
+  el.wheelShell.style.setProperty(
+    "--spindle-length-px",
+    `${spindleLength}px`
+  );
+  el.wheelShell.style.setProperty("--spindle-width-px", `${spindleWidth}px`);
+
+  const guessLimit = getGuessAngleLimit();
+  state.dial.angle = clamp(state.dial.angle, -guessLimit, guessLimit);
+  state.dial.target = clamp(state.dial.target, -guessLimit, guessLimit);
 }
 
 function drawRingSegment(ctx, cx, cy, innerR, outerR, start, end, fill) {
@@ -273,91 +289,42 @@ function drawRingSegment(ctx, cx, cy, innerR, outerR, start, end, fill) {
   ctx.fill();
 }
 
-function sprinkleDots({
-  ctx,
-  cx,
-  cy,
-  minR,
-  maxR,
-  start,
-  end,
-  count,
-  colorA,
-  colorB,
-  minSize,
-  maxSize,
-  seed,
-}) {
-  for (let i = 0; i < count; i += 1) {
-    const a = start + pseudoRandom(i * 2 + 11, seed) * (end - start);
-    const rr1 = pseudoRandom(i * 3 + 23, seed + 2.17);
-    const rr2 = pseudoRandom(i * 5 + 47, seed + 6.11);
-    const r = Math.sqrt(rr1 * (maxR * maxR - minR * minR) + minR * minR);
-    const size = minSize + rr2 * (maxSize - minSize);
-    const x = cx + Math.cos(a) * r;
-    const y = cy + Math.sin(a) * r;
-    ctx.beginPath();
-    ctx.fillStyle = rr1 > 0.72 ? colorA : colorB;
-    ctx.arc(x, y, size, 0, Math.PI * 2);
-    ctx.fill();
-  }
+function getGuessAngleLimit() {
+  const sideInsetX = state.wheel.w * 0.1;
+  const dx = Math.max(1, state.wheel.cx - sideInsetX);
+  const dy = Math.max(1, state.wheel.cy - state.wheel.slopeSideY);
+  const rawLimit = (Math.atan2(dx, dy) * 180) / Math.PI;
+  return clamp(rawLimit - 1.2, 48, 88);
+}
+
+function clampGuessAngle(deg) {
+  const limit = getGuessAngleLimit();
+  return clamp(deg, -limit, limit);
 }
 
 function paintSpectrumBase(ctx) {
-  const { w, h, cx, cy, outerR, ringOuterR, faceR } = state.wheel;
+  const { cx, cy, outerR, ringOuterR, faceR } = state.wheel;
 
-  for (let i = 0; i < 88; i += 1) {
-    const t = i / 88;
+  for (let i = 0; i < 86; i += 1) {
+    const t = i / 86;
     const a = t * Math.PI * 2;
-    const sx = cx + Math.cos(a) * (outerR * 1.006);
-    const sy = cy + Math.sin(a) * (outerR * 1.006);
+    const sx = cx + Math.cos(a) * (outerR * 1.018);
+    const sy = cy + Math.sin(a) * (outerR * 1.018);
     ctx.beginPath();
-    ctx.fillStyle = "#f4efe4";
-    ctx.arc(sx, sy, outerR * 0.042, 0, Math.PI * 2);
+    ctx.fillStyle = "#f2eee5";
+    ctx.arc(sx, sy, outerR * 0.048, 0, Math.PI * 2);
     ctx.fill();
   }
 
   ctx.beginPath();
-  ctx.fillStyle = "#090e4b";
+  ctx.fillStyle = "#070b4a";
   ctx.arc(cx, cy, ringOuterR, 0, Math.PI * 2);
   ctx.fill();
 
-  sprinkleDots({
-    ctx,
-    cx,
-    cy,
-    minR: faceR * 1.03,
-    maxR: ringOuterR * 0.985,
-    start: 0,
-    end: Math.PI * 2,
-    count: 340,
-    colorA: "rgba(255,255,255,0.82)",
-    colorB: "rgba(198,211,223,0.72)",
-    minSize: 0.55,
-    maxSize: 2.1,
-    seed: 14.5,
-  });
-
   ctx.beginPath();
-  ctx.fillStyle = "#f1ede3";
+  ctx.fillStyle = "#fbfbf8";
   ctx.arc(cx, cy, faceR, 0, Math.PI * 2);
   ctx.fill();
-
-  sprinkleDots({
-    ctx,
-    cx,
-    cy,
-    minR: 0,
-    maxR: faceR * 0.98,
-    start: 0,
-    end: Math.PI * 2,
-    count: 1800,
-    colorA: "rgba(97,95,88,0.08)",
-    colorB: "rgba(134,132,124,0.06)",
-    minSize: 0.35,
-    maxSize: 0.9,
-    seed: 2.25,
-  });
 
   const faceGlow = ctx.createRadialGradient(
     cx,
@@ -367,19 +334,38 @@ function paintSpectrumBase(ctx) {
     cy - faceR * 0.3,
     faceR * 0.95
   );
-  faceGlow.addColorStop(0, "rgba(255,255,255,0.32)");
-  faceGlow.addColorStop(0.35, "rgba(255,255,255,0.13)");
+  faceGlow.addColorStop(0, "rgba(255,255,255,0.4)");
+  faceGlow.addColorStop(0.35, "rgba(255,255,255,0.16)");
   faceGlow.addColorStop(1, "rgba(255,255,255,0)");
   ctx.beginPath();
   ctx.fillStyle = faceGlow;
   ctx.arc(cx, cy, faceR, 0, Math.PI * 2, false);
   ctx.fill();
 
-  ctx.strokeStyle = "#0b124f";
-  ctx.lineWidth = Math.max(1.2, faceR * 0.018);
+  const faceShade = ctx.createLinearGradient(0, cy, 0, cy + faceR);
+  faceShade.addColorStop(0, "rgba(0, 0, 0, 0)");
+  faceShade.addColorStop(1, "rgba(0, 0, 0, 0.08)");
+  ctx.beginPath();
+  ctx.fillStyle = faceShade;
+  ctx.arc(cx, cy, faceR, 0, Math.PI * 2, false);
+  ctx.fill();
+
+  ctx.strokeStyle = "#0a1156";
+  ctx.lineWidth = Math.max(1.6, faceR * 0.02);
   ctx.beginPath();
   ctx.arc(cx, cy, faceR, 0, Math.PI * 2, false);
   ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.62)";
+  ctx.lineWidth = Math.max(2.4, outerR * 0.012);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringOuterR * 0.965, Math.PI * 0.56, Math.PI * 0.9);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringOuterR * 0.965, Math.PI * 0.1, Math.PI * 0.44);
+  ctx.stroke();
+  ctx.lineCap = "butt";
 }
 
 function drawSpectrum(rotationDeg) {
@@ -402,7 +388,7 @@ function drawTarget(rotationDeg) {
   targetCtx.translate(-cx, -cy);
   const theta = angleToTheta(state.targetAngle);
   const halfW = (state.targetWidth * Math.PI) / 360;
-  const wedges = ["#d29b17", "#b7e1c0", "#ed6f52", "#b7e1c0", "#d29b17"];
+  const wedges = ["#e7b43e", "#a6d6b2", "#e46952", "#a6d6b2", "#e7b43e"];
   const step = (halfW * 2) / wedges.length;
   const centers = [theta, theta + Math.PI];
 
@@ -479,7 +465,7 @@ function readPointerAngle(clientX, clientY) {
   const dx = x - state.wheel.cx;
   const dy = state.wheel.cy - y;
   const deg = (Math.atan2(dx, dy) * 180) / Math.PI;
-  return clamp(deg, -90, 90);
+  return clampGuessAngle(deg);
 }
 
 function readPointerSpinAngle(clientX, clientY) {
@@ -560,13 +546,15 @@ function tick() {
   }
 
   const spring = state.dial.dragging ? 0.42 : 0.16;
+  const limit = getGuessAngleLimit();
+  state.dial.target = clamp(state.dial.target, -limit, limit);
   state.dial.velocity += (state.dial.target - state.dial.angle) * spring;
   state.dial.velocity *= state.dial.dragging ? 0.62 : 0.84;
   state.dial.angle += state.dial.velocity;
-  state.dial.angle = clamp(state.dial.angle, -90, 90);
+  state.dial.angle = clamp(state.dial.angle, -limit, limit);
 
   if (!state.dial.dragging) {
-    if (state.dial.angle === -90 || state.dial.angle === 90) {
+    if (state.dial.angle <= -limit || state.dial.angle >= limit) {
       state.dial.velocity *= -0.15;
     }
     if (Math.abs(state.dial.target - state.dial.angle) < 0.06) {

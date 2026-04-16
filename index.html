@@ -18,24 +18,30 @@
 
     <main class="app">
       <header class="top-bar">
-        <div class="round-pill">
-          <span>Round</span>
-          <strong id="roundCount">1</strong>
+        <article class="team-card team-left active" id="team0Card">
+          <p class="team-name">Team Aurora</p>
+          <p class="team-score" id="team0Score">0</p>
+        </article>
+
+        <div class="status-cluster">
+          <div class="round-pill">
+            <span>Round</span>
+            <strong id="roundCount">1</strong>
+          </div>
+          <p class="phase-badge" id="phaseBadge">Psychic View</p>
         </div>
+
+        <article class="team-card team-right" id="team1Card">
+          <p class="team-name">Team Ember</p>
+          <p class="team-score" id="team1Score">0</p>
+        </article>
       </header>
 
       <section class="board">
-        <div class="labels-row">
-          <span id="leftLabel">Hot</span>
-          <span id="rightLabel">Cold</span>
-        </div>
-
         <div class="wheel-layout">
-          <article class="team-card side-card side-left active" id="team0Card">
-            <p class="team-name">Team Aurora</p>
-            <p class="team-score" id="team0Score">0</p>
-          </article>
-
+          <div class="orb-tag side-indicator side-left-indicator" aria-hidden="true">
+            LEFT
+          </div>
           <div class="wheel-shell" id="wheelShell">
             <canvas id="spectrumCanvas" class="layer rotatable-spectrum"></canvas>
             <canvas id="targetCanvas" class="layer rotatable-spectrum"></canvas>
@@ -51,18 +57,26 @@
             </div>
 
             <div class="score-popup" id="scorePopup"></div>
-          </div>
 
-          <article class="team-card side-card side-right" id="team1Card">
-            <p class="team-name">Team Ember</p>
-            <p class="team-score" id="team1Score">0</p>
-          </article>
+            <div class="spectrum-card" aria-hidden="true">
+              <div class="spectrum-side spectrum-left">
+                <span class="spectrum-arrow">&#8592;</span>
+                <span id="leftLabel">Hot</span>
+              </div>
+              <div class="spectrum-side spectrum-right">
+                <span class="spectrum-arrow">&#8594;</span>
+                <span id="rightLabel">Cold</span>
+              </div>
+            </div>
+            <div class="new-tag" aria-hidden="true">NEW</div>
+          </div>
+          <div class="orb-tag side-indicator side-right-indicator" aria-hidden="true">
+            RIGHT
+          </div>
         </div>
       </section>
 
       <section class="control-panel">
-        <p class="phase-badge" id="phaseBadge">Psychic View</p>
-
         <div class="actions">
           <button id="startGuessBtn" class="btn btn-primary">
             Hide Target &amp; Start Guess

@@ -17,6 +17,7 @@ const spectrumPairs = [
 ];
 
 const SETUP_PUSH_GAIN = 1.35;
+const FIXED_TARGET_WIDTH_DEG = 35;
 
 const state = {
   teams: [
@@ -28,11 +29,9 @@ const state = {
   phase: "psychic",
   leftLabel: "Hot",
   rightLabel: "Cold",
-  clue: "",
   wheelRotation: 0,
   targetAngle: 0,
-  targetWidth: 26,
-  targetBands: { inner: 0, mid: 0, outer: 0 },
+  targetWidth: FIXED_TARGET_WIDTH_DEG,
   dial: {
     angle: 0,
     target: 0,
@@ -65,10 +64,9 @@ const el = {
   team0Card: document.getElementById("team0Card"),
   team1Card: document.getElementById("team1Card"),
   phaseBadge: document.getElementById("phaseBadge"),
-  statusLine: document.getElementById("statusLine"),
-  clueInput: document.getElementById("clueInput"),
   startGuessBtn: document.getElementById("startGuessBtn"),
   revealBtn: document.getElementById("revealBtn"),
+  resetRoundBtn: document.getElementById("resetRoundBtn"),
   nextRoundBtn: document.getElementById("nextRoundBtn"),
   newGameBtn: document.getElementById("newGameBtn"),
   wheelShell: document.getElementById("wheelShell"),
@@ -174,21 +172,13 @@ function buildRound() {
   state.leftLabel = leftLabel;
   state.rightLabel = rightLabel;
   state.targetAngle = randomBetween(-90, 90);
-  state.targetWidth = randomBetween(22, 32.4);
-  const half = state.targetWidth / 2;
-  state.targetBands = {
-    inner: half * 0.38,
-    mid: half * 0.72,
-    outer: half,
-  };
+  state.targetWidth = FIXED_TARGET_WIDTH_DEG;
   state.phase = "setup";
-  state.clue = "";
   state.wheelRotation = 0;
   state.dial.angle = 0;
   state.dial.target = 0;
   state.dial.velocity = 0;
   state.dial.clickStep = 0;
-  el.clueInput.value = "";
   setCover("closed");
   updateUI();
   drawAll();
@@ -204,42 +194,37 @@ function updateUI() {
   el.team0Card.classList.toggle("active", state.currentTeam === 0);
   el.team1Card.classList.toggle("active", state.currentTeam === 1);
 
-  const team = state.teams[state.currentTeam].name;
   if (state.phase === "setup") {
     el.phaseBadge.textContent = "Setup (Hidden)";
-    el.statusLine.textContent = `${team} psychic: spin to reset while target is hidden, then press Reveal.`;
     el.startGuessBtn.disabled = true;
     el.revealBtn.disabled = false;
     el.revealBtn.textContent = "Reveal";
+    el.resetRoundBtn.disabled = true;
     el.nextRoundBtn.disabled = true;
-    el.clueInput.disabled = true;
     el.pointerLayer.classList.remove("locked");
   } else if (state.phase === "psychic") {
     el.phaseBadge.textContent = "Psychic View";
-    el.statusLine.textContent = `${team} psychic: study the bullseye and give a clue.`;
     el.startGuessBtn.disabled = false;
     el.revealBtn.disabled = true;
     el.revealBtn.textContent = "Reveal";
+    el.resetRoundBtn.disabled = false;
     el.nextRoundBtn.disabled = true;
-    el.clueInput.disabled = false;
     el.pointerLayer.classList.add("locked");
   } else if (state.phase === "guessing") {
     el.phaseBadge.textContent = "Guessing View";
-    const clue = state.clue ? `Clue: "${state.clue}". ` : "";
-    el.statusLine.textContent = `${team} guessers: ${clue}move the spindle to lock your choice.`;
     el.startGuessBtn.disabled = true;
     el.revealBtn.disabled = false;
     el.revealBtn.textContent = "Reveal";
+    el.resetRoundBtn.disabled = false;
     el.nextRoundBtn.disabled = true;
-    el.clueInput.disabled = true;
     el.pointerLayer.classList.remove("locked");
   } else if (state.phase === "reveal") {
     el.phaseBadge.textContent = "Reveal";
     el.startGuessBtn.disabled = true;
     el.revealBtn.disabled = true;
     el.revealBtn.textContent = "Reveal";
+    el.resetRoundBtn.disabled = true;
     el.nextRoundBtn.disabled = false;
-    el.clueInput.disabled = true;
     el.pointerLayer.classList.add("locked");
   }
 }
@@ -408,7 +393,7 @@ function drawSpectrum(rotationDeg) {
   spectrumCtx.restore();
 }
 
-function drawTarget(showScoringBands, rotationDeg) {
+function drawTarget(rotationDeg) {
   const { w, h, cx, cy, targetInnerR, targetOuterR } = state.wheel;
   targetCtx.clearRect(0, 0, w, h);
   targetCtx.save();
@@ -417,8 +402,6 @@ function drawTarget(showScoringBands, rotationDeg) {
   targetCtx.translate(-cx, -cy);
   const theta = angleToTheta(state.targetAngle);
   const halfW = (state.targetWidth * Math.PI) / 360;
-  const innerHalf = (state.targetBands.inner * Math.PI) / 180;
-  const midHalf = (state.targetBands.mid * Math.PI) / 180;
   const wedges = ["#d29b17", "#b7e1c0", "#ed6f52", "#b7e1c0", "#d29b17"];
   const step = (halfW * 2) / wedges.length;
   const centers = [theta, theta + Math.PI];
@@ -442,44 +425,6 @@ function drawTarget(showScoringBands, rotationDeg) {
       );
     }
     targetCtx.restore();
-
-    if (showScoringBands) {
-      drawRingSegment(
-        targetCtx,
-        cx,
-        cy,
-        targetInnerR,
-        targetOuterR,
-        centerTheta - halfW,
-        centerTheta + halfW,
-        "rgba(255, 255, 255, 0.14)"
-      );
-      drawRingSegment(
-        targetCtx,
-        cx,
-        cy,
-        targetInnerR,
-        targetOuterR,
-        centerTheta - midHalf,
-        centerTheta + midHalf,
-        "rgba(255, 255, 255, 0.24)"
-      );
-
-      targetCtx.save();
-      targetCtx.shadowColor = "rgba(255,255,255,0.86)";
-      targetCtx.shadowBlur = 15;
-      drawRingSegment(
-        targetCtx,
-        cx,
-        cy,
-        targetInnerR,
-        targetOuterR,
-        centerTheta - innerHalf,
-        centerTheta + innerHalf,
-        "rgba(255,255,255,0.46)"
-      );
-      targetCtx.restore();
-    }
   }
   targetCtx.restore();
 }
@@ -488,7 +433,7 @@ function drawAll() {
   const liveWheelRotation =
     state.phase === "setup" ? state.dial.angle : state.wheelRotation;
   drawSpectrum(liveWheelRotation);
-  drawTarget(state.phase === "reveal", liveWheelRotation);
+  drawTarget(liveWheelRotation);
 }
 
 function setCover(mode) {
@@ -502,7 +447,7 @@ function showScorePopup(points, label) {
   el.scorePopup.classList.add("show");
   popupTimer = setTimeout(() => {
     el.scorePopup.classList.remove("show");
-  }, 1500);
+  }, 2400);
 }
 
 function calculateScore() {
@@ -513,11 +458,10 @@ function calculateScore() {
     shortestAngularDistance(guessWorldAngle, targetWorldAngle),
     shortestAngularDistance(guessWorldAngle, oppositeTargetWorldAngle)
   );
-  const { inner, mid, outer } = state.targetBands;
-  if (d <= inner) return { points: 4, label: "Perfect" };
-  if (d <= mid) return { points: 3, label: "Great" };
-  if (d <= outer) return { points: 2, label: "Good" };
-  if (d <= outer + 7.5) return { points: 1, label: "Close" };
+  const wedgeBandWidth = state.targetWidth / 5;
+  if (d <= wedgeBandWidth * 0.5) return { points: 4, label: "Perfect" };
+  if (d <= wedgeBandWidth * 1.5) return { points: 3, label: "Great" };
+  if (d <= wedgeBandWidth * 2.5) return { points: 2, label: "Good" };
   return { points: 0, label: "Miss" };
 }
 
@@ -647,7 +591,6 @@ function tick() {
 
 function startGuessing() {
   if (state.phase !== "psychic") return;
-  state.clue = el.clueInput.value.trim();
   state.phase = "guessing";
   state.dial.angle = 0;
   state.dial.target = 0;
@@ -680,9 +623,6 @@ function reveal() {
   playRevealSound();
   const result = calculateScore();
   state.teams[state.currentTeam].score += result.points;
-  el.statusLine.textContent = `${state.teams[state.currentTeam].name} scored ${result.points} point${
-    result.points === 1 ? "" : "s"
-  } (${result.label.toLowerCase()}).`;
   showScorePopup(result.points, result.label);
   updateUI();
   drawAll();
@@ -693,6 +633,26 @@ function nextRound() {
   state.currentTeam = state.currentTeam === 0 ? 1 : 0;
   state.round += 1;
   buildRound();
+}
+
+function resetRound() {
+  if (state.phase !== "psychic" && state.phase !== "guessing") return;
+  state.phase = "setup";
+  state.dial.dragging = false;
+  state.dial.angle = state.wheelRotation;
+  state.dial.target = state.wheelRotation;
+  state.dial.velocity = 0;
+  state.dial.clickStep = Math.round(state.dial.angle / 3.2);
+  setCover("closed");
+  if (popupTimer) {
+    clearTimeout(popupTimer);
+    popupTimer = null;
+  }
+  el.scorePopup.classList.remove("show");
+  el.pointerLayer.classList.remove("dragging");
+  updateNeedle();
+  updateUI();
+  drawAll();
 }
 
 function newGame() {
@@ -725,11 +685,9 @@ function attachEvents() {
     startGuessing();
   });
   el.revealBtn.addEventListener("click", reveal);
+  el.resetRoundBtn.addEventListener("click", resetRound);
   el.nextRoundBtn.addEventListener("click", nextRound);
   el.newGameBtn.addEventListener("click", newGame);
-  el.clueInput.addEventListener("input", () => {
-    state.clue = el.clueInput.value;
-  });
 }
 
 function boot() {

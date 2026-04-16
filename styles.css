@@ -1,5 +1,5 @@
 :root {
-  --bg-sky: #f2f2f3;
+  --bg-sky: #dbe8f3;
   --bg-board: #4c7898;
   --board-line: rgba(8, 19, 52, 0.5);
   --card-border: rgba(255, 255, 255, 0.24);
@@ -21,10 +21,11 @@
   --pivot-x-px: 50%;
   --slope-inset-x: 10%;
   --spindle-length-px: 220px;
-  --spindle-width-px: 10px;
+  --spindle-width-px: 6px;
   --slope-side-y-px: 45%;
   --slope-center-y-px: 52%;
   --wheel-rotation: 0deg;
+  --wheel-offset-y: -22px;
 }
 
 * {
@@ -43,24 +44,14 @@ body {
   overflow: hidden;
   font-family: "Poppins", sans-serif;
   color: var(--text);
-  background: linear-gradient(
-    180deg,
-    var(--bg-sky) 0 16%,
-    #d6dde3 16.1% 16.4%,
-    var(--bg-board) 16.5% 100%
-  );
+  background: var(--bg-board);
 }
 
 .bg-vignette {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(
-    circle at 50% 26%,
-    rgba(255, 255, 255, 0.34) 0%,
-    rgba(255, 255, 255, 0.08) 30%,
-    rgba(0, 7, 31, 0.12) 100%
-  );
+  background: none;
   z-index: 0;
 }
 
@@ -107,8 +98,14 @@ body {
 .top-bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
   column-gap: clamp(8px, 2vw, 28px);
+  min-height: clamp(118px, 15.5vh, 172px);
+  padding: clamp(10px, 1.4vw, 16px) clamp(12px, 2vw, 20px);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .status-cluster {
@@ -186,9 +183,29 @@ body {
 
 .team-name {
   margin: 0;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  appearance: none;
+  font: inherit;
   font-weight: 500;
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+.team-left .team-name {
+  text-align: left;
+}
+
+.team-right .team-name {
+  text-align: right;
+}
+
+.team-name:focus {
+  outline: 1px solid rgba(219, 232, 255, 0.4);
+  outline-offset: 2px;
+  border-radius: 5px;
 }
 
 .team-score {
@@ -215,6 +232,7 @@ body {
   align-items: end;
   justify-items: center;
   gap: clamp(12px, 2.4vw, 34px);
+  transform: translateY(var(--wheel-offset-y));
 }
 
 .side-indicator {
@@ -253,7 +271,7 @@ body {
   right: var(--slope-inset-x);
   top: 0;
   bottom: 0;
-  background: linear-gradient(180deg, #0a0f58 0%, #060a49 100%);
+  background: #060a49;
   -webkit-clip-path: polygon(
     0 var(--slope-side-y-px),
     50% var(--slope-center-y-px),
@@ -328,7 +346,7 @@ body {
     50% var(--slope-center-y-px),
     var(--slope-inset-x) var(--slope-side-y-px)
   );
-  background: radial-gradient(circle at 50% 13%, #9bc4cf 0%, #87afba 100%);
+  background: var(--cover);
   mask-image: radial-gradient(
     circle at var(--pivot-x-px) var(--pivot-y-px),
     #000 0 calc(var(--face-radius-px) - 0.6px),
@@ -379,9 +397,9 @@ body {
   transform: translate(-50%, -100%) rotate(0deg);
   transform-origin: 50% 100%;
   border-radius: 999px;
-  background: linear-gradient(180deg, #cf4452 0%, #bb3544 100%);
-  border: 1px solid rgba(122, 22, 38, 0.42);
-  box-shadow: 0 1px 2px rgba(122, 22, 38, 0.28);
+  background: #c43b4a;
+  border: 0;
+  box-shadow: 0 0 0 1px rgba(122, 22, 38, 0.22), 0 1px 2px rgba(122, 22, 38, 0.22);
 }
 
 .pivot {
@@ -389,10 +407,10 @@ body {
   left: var(--pivot-x-px);
   top: var(--pivot-y-px);
   transform: translate(-50%, -50%);
-  width: clamp(104px, 14vw, 166px);
+  width: clamp(88px, 11.8vw, 142px);
   aspect-ratio: 1;
   border-radius: 50%;
-  background: radial-gradient(circle at 34% 26%, #d24a53 0%, #bf3742 46%, #a92f37 100%);
+  background: #bf3742;
   border: 0;
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.28), inset 0 2px 2px rgba(255, 255, 255, 0.12);
   display: grid;
@@ -405,10 +423,10 @@ body {
 .score-popup {
   position: absolute;
   left: 50%;
-  top: 7%;
+  top: 1.7%;
   transform: translate(-50%, 10px) scale(0.95);
   z-index: 12;
-  font-size: clamp(1.1rem, 3.2vw, 1.85rem);
+  font-size: clamp(1.3rem, 3.8vw, 2.2rem);
   font-weight: 700;
   color: #ffd978;
   text-shadow: 0 4px 15px rgba(0, 0, 0, 0.42);
@@ -425,10 +443,10 @@ body {
 .spectrum-card {
   position: absolute;
   left: 50%;
-  bottom: 30%;
+  top: calc(70% - clamp(116px, 15vw, 182px));
   transform: translateX(-50%);
   width: clamp(310px, 45vw, 540px);
-  height: clamp(116px, 15vw, 182px);
+  height: clamp(84px, 11.2vw, 138px);
   border-radius: 12px;
   overflow: hidden;
   display: grid;
@@ -476,24 +494,37 @@ body {
 }
 
 .control-panel {
-  border-radius: 14px;
-  border: 1px solid rgba(214, 224, 248, 0.3);
-  background: linear-gradient(
-    150deg,
-    rgba(8, 17, 42, 0.58),
-    rgba(8, 16, 39, 0.76)
-  );
-  box-shadow: 0 10px 18px rgba(2, 8, 25, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  border-radius: 0;
+  border: 0;
+  background: #0a1638;
+  box-shadow: none;
   padding: 10px 12px;
+  margin: 0;
+  z-index: 20;
 }
 
 .actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: center;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  position: relative;
+}
+
+#newGameBtn {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  margin-top: auto;
+  margin-bottom: auto;
 }
 
 .btn {
@@ -564,6 +595,10 @@ body {
 }
 
 @media (max-width: 900px) {
+  :root {
+    --wheel-offset-y: -14px;
+  }
+
   .app {
     height: calc(100svh - 8px);
     margin: 4px auto;
@@ -573,6 +608,8 @@ body {
   .top-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     row-gap: 8px;
+    min-height: clamp(124px, 19vh, 166px);
+    padding: 10px;
   }
 
   .status-cluster {
@@ -603,12 +640,26 @@ body {
     gap: 8px;
   }
 
+  #newGameBtn {
+    position: static;
+    right: auto;
+    top: auto;
+    bottom: auto;
+    margin-top: 0;
+    margin-bottom: 0;
+    grid-column: 2;
+  }
+
   .btn {
     width: 100%;
   }
 }
 
 @media (max-width: 640px) {
+  :root {
+    --wheel-offset-y: -12px;
+  }
+
   body {
     overflow-y: auto;
   }
@@ -616,7 +667,7 @@ body {
   .app {
     min-height: 100svh;
     height: auto;
-    padding-bottom: 10px;
+    padding-bottom: 0;
   }
 
   .team-card {
@@ -649,9 +700,9 @@ body {
   }
 
   .spectrum-card {
-    bottom: 30%;
+    top: calc(70% - clamp(106px, 24vw, 150px));
     width: min(90vw, 420px);
-    height: clamp(106px, 24vw, 150px);
+    height: clamp(74px, 16vw, 112px);
   }
 
   .spectrum-side {

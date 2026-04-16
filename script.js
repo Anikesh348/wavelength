@@ -18,11 +18,15 @@ const spectrumPairs = [
 
 const SETUP_PUSH_GAIN = 1.35;
 const FIXED_TARGET_WIDTH_DEG = 35;
+const DEFAULT_TEAM_NAMES = ["Team Aurora", "Team Ember"];
+const PERSISTENCE_KEY = "wavelength.scoreboard.v1";
+const TARGET_WEDGE_COLORS = ["#e0b247", "#e45b4c", "#5d8fa6", "#e45b4c", "#e0b247"];
+const TARGET_WEDGE_LABELS = ["2", "3", "4", "3", "2"];
 
 const state = {
   teams: [
-    { name: "Team Aurora", score: 0 },
-    { name: "Team Ember", score: 0 },
+    { name: DEFAULT_TEAM_NAMES[0], score: 0 },
+    { name: DEFAULT_TEAM_NAMES[1], score: 0 },
   ],
   currentTeam: 0,
   round: 1,
@@ -58,6 +62,8 @@ const state = {
 };
 
 const el = {
+  team0Name: document.getElementById("team0Name"),
+  team1Name: document.getElementById("team1Name"),
   leftLabel: document.getElementById("leftLabel"),
   rightLabel: document.getElementById("rightLabel"),
   roundCount: document.getElementById("roundCount"),
@@ -101,6 +107,60 @@ function signedAngularDelta(from, to) {
 
 function randomBetween(min, max) {
   return min + Math.random() * (max - min);
+}
+
+function normalizeTeamName(value, fallbackName) {
+  if (typeof value !== "string") return fallbackName;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 24) : fallbackName;
+}
+
+function readPersistedScoreboard() {
+  try {
+    const raw = localStorage.getItem(PERSISTENCE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.teams) || parsed.teams.length !== 2) {
+      return null;
+    }
+    return parsed;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function persistScoreboard() {
+  try {
+    const payload = {
+      teams: state.teams.map((team, index) => ({
+        name: normalizeTeamName(team.name, DEFAULT_TEAM_NAMES[index]),
+        score: Number.isFinite(team.score) ? Math.max(0, Math.floor(team.score)) : 0,
+      })),
+    };
+    localStorage.setItem(PERSISTENCE_KEY, JSON.stringify(payload));
+  } catch (_error) {
+    // Ignore persistence failures (e.g. storage denied/private mode).
+  }
+}
+
+function clearPersistedScoreboard() {
+  try {
+    localStorage.removeItem(PERSISTENCE_KEY);
+  } catch (_error) {
+    // Ignore storage cleanup failures.
+  }
+}
+
+function loadPersistedScoreboard() {
+  const persisted = readPersistedScoreboard();
+  if (!persisted) return;
+  state.teams = persisted.teams.map((team, index) => ({
+    name: normalizeTeamName(team.name, DEFAULT_TEAM_NAMES[index]),
+    score:
+      Number.isFinite(team.score) || typeof team.score === "string"
+        ? Math.max(0, Math.floor(Number(team.score) || 0))
+        : 0,
+  }));
 }
 
 function angleToTheta(deg) {
@@ -182,6 +242,12 @@ function buildRound() {
 }
 
 function updateUI() {
+  if (document.activeElement !== el.team0Name) {
+    el.team0Name.value = state.teams[0].name;
+  }
+  if (document.activeElement !== el.team1Name) {
+    el.team1Name.value = state.teams[1].name;
+  }
   el.leftLabel.textContent = state.leftLabel;
   el.rightLabel.textContent = state.rightLabel;
   el.roundCount.textContent = String(state.round);
@@ -224,6 +290,8 @@ function updateUI() {
     el.nextRoundBtn.disabled = false;
     el.pointerLayer.classList.add("locked");
   }
+
+  persistScoreboard();
 }
 
 function resizeCanvas(canvas, ctx) {
@@ -245,12 +313,12 @@ function measureWheel() {
   state.wheel.ringOuterR = state.wheel.outerR * 0.92;
   state.wheel.faceR = state.wheel.outerR * 0.84;
   state.wheel.hubR = state.wheel.faceR * 0.2;
-  state.wheel.targetInnerR = state.wheel.hubR * 1.08;
+  state.wheel.targetInnerR = state.wheel.hubR * 0.86;
   state.wheel.targetOuterR = state.wheel.faceR * 0.95;
   state.wheel.slopeCenterY = state.wheel.cy;
   state.wheel.slopeSideY = state.wheel.cy - state.wheel.faceR * 0.26;
   const spindleLength = clamp(state.wheel.faceR * 0.8, 120, state.wheel.faceR - 14);
-  const spindleWidth = clamp(state.wheel.faceR * 0.03, 7, 11);
+  const spindleWidth = clamp(state.wheel.faceR * 0.018, 4, 7);
 
   el.wheelShell.style.setProperty("--face-radius", `${state.wheel.faceR}px`);
   el.wheelShell.style.setProperty("--face-radius-px", `${state.wheel.faceR}px`);
@@ -326,46 +394,11 @@ function paintSpectrumBase(ctx) {
   ctx.arc(cx, cy, faceR, 0, Math.PI * 2);
   ctx.fill();
 
-  const faceGlow = ctx.createRadialGradient(
-    cx,
-    cy - faceR * 0.85,
-    faceR * 0.06,
-    cx,
-    cy - faceR * 0.3,
-    faceR * 0.95
-  );
-  faceGlow.addColorStop(0, "rgba(255,255,255,0.4)");
-  faceGlow.addColorStop(0.35, "rgba(255,255,255,0.16)");
-  faceGlow.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.beginPath();
-  ctx.fillStyle = faceGlow;
-  ctx.arc(cx, cy, faceR, 0, Math.PI * 2, false);
-  ctx.fill();
-
-  const faceShade = ctx.createLinearGradient(0, cy, 0, cy + faceR);
-  faceShade.addColorStop(0, "rgba(0, 0, 0, 0)");
-  faceShade.addColorStop(1, "rgba(0, 0, 0, 0.08)");
-  ctx.beginPath();
-  ctx.fillStyle = faceShade;
-  ctx.arc(cx, cy, faceR, 0, Math.PI * 2, false);
-  ctx.fill();
-
   ctx.strokeStyle = "#0a1156";
   ctx.lineWidth = Math.max(1.6, faceR * 0.02);
   ctx.beginPath();
   ctx.arc(cx, cy, faceR, 0, Math.PI * 2, false);
   ctx.stroke();
-
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.62)";
-  ctx.lineWidth = Math.max(2.4, outerR * 0.012);
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.arc(cx, cy, ringOuterR * 0.965, Math.PI * 0.56, Math.PI * 0.9);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx, cy, ringOuterR * 0.965, Math.PI * 0.1, Math.PI * 0.44);
-  ctx.stroke();
-  ctx.lineCap = "butt";
 }
 
 function drawSpectrum(rotationDeg) {
@@ -388,15 +421,16 @@ function drawTarget(rotationDeg) {
   targetCtx.translate(-cx, -cy);
   const theta = angleToTheta(state.targetAngle);
   const halfW = (state.targetWidth * Math.PI) / 360;
-  const wedges = ["#e7b43e", "#a6d6b2", "#e46952", "#a6d6b2", "#e7b43e"];
-  const step = (halfW * 2) / wedges.length;
+  const step = (halfW * 2) / TARGET_WEDGE_COLORS.length;
   const centers = [theta, theta + Math.PI];
+  const labelRadius = targetInnerR + (targetOuterR - targetInnerR) * 0.91;
+  const labelSize = Math.max(10, Math.min(18, targetOuterR * 0.065));
 
   for (const centerTheta of centers) {
     targetCtx.save();
     targetCtx.shadowColor = "rgba(0,0,0,0.17)";
     targetCtx.shadowBlur = 7;
-    for (let i = 0; i < wedges.length; i += 1) {
+    for (let i = 0; i < TARGET_WEDGE_COLORS.length; i += 1) {
       const start = centerTheta - halfW + i * step;
       const end = start + step;
       drawRingSegment(
@@ -407,10 +441,28 @@ function drawTarget(rotationDeg) {
         targetOuterR,
         start,
         end,
-        wedges[i]
+        TARGET_WEDGE_COLORS[i]
       );
     }
     targetCtx.restore();
+
+    for (let i = 0; i < TARGET_WEDGE_LABELS.length; i += 1) {
+      const start = centerTheta - halfW + i * step;
+      const end = start + step;
+      const mid = (start + end) * 0.5;
+      const x = cx + Math.cos(mid) * labelRadius;
+      const y = cy + Math.sin(mid) * labelRadius;
+
+      targetCtx.save();
+      targetCtx.translate(x, y);
+      targetCtx.rotate(mid + Math.PI / 2);
+      targetCtx.fillStyle = "#111111";
+      targetCtx.font = `400 ${labelSize}px "Poppins", sans-serif`;
+      targetCtx.textAlign = "center";
+      targetCtx.textBaseline = "middle";
+      targetCtx.fillText(TARGET_WEDGE_LABELS[i], 0, 0);
+      targetCtx.restore();
+    }
   }
   targetCtx.restore();
 }
@@ -433,7 +485,7 @@ function showScorePopup(points, label) {
   el.scorePopup.classList.add("show");
   popupTimer = setTimeout(() => {
     el.scorePopup.classList.remove("show");
-  }, 2400);
+  }, 3400);
 }
 
 function calculateScore() {
@@ -644,6 +696,9 @@ function resetRound() {
 }
 
 function newGame() {
+  clearPersistedScoreboard();
+  state.teams[0].name = DEFAULT_TEAM_NAMES[0];
+  state.teams[1].name = DEFAULT_TEAM_NAMES[1];
   state.teams[0].score = 0;
   state.teams[1].score = 0;
   state.currentTeam = 0;
@@ -676,9 +731,23 @@ function attachEvents() {
   el.resetRoundBtn.addEventListener("click", resetRound);
   el.nextRoundBtn.addEventListener("click", nextRound);
   el.newGameBtn.addEventListener("click", newGame);
+
+  const teamNameInputs = [el.team0Name, el.team1Name];
+  teamNameInputs.forEach((input, index) => {
+    input.addEventListener("input", () => {
+      state.teams[index].name = normalizeTeamName(input.value, DEFAULT_TEAM_NAMES[index]);
+      persistScoreboard();
+    });
+    input.addEventListener("blur", () => {
+      state.teams[index].name = normalizeTeamName(input.value, DEFAULT_TEAM_NAMES[index]);
+      input.value = state.teams[index].name;
+      persistScoreboard();
+    });
+  });
 }
 
 function boot() {
+  loadPersistedScoreboard();
   resizeCanvas(el.spectrumCanvas, spectrumCtx);
   resizeCanvas(el.targetCanvas, targetCtx);
   measureWheel();

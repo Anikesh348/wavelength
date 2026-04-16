@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wavelength Digital</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-vignette"></div>
+    <div class="grain"></div>
+
+    <main class="app">
+      <header class="top-bar">
+        <h1>Wavelength</h1>
+        <div class="round-pill">
+          <span>Round</span>
+          <strong id="roundCount">1</strong>
+        </div>
+      </header>
+
+      <section class="scoreboard">
+        <article class="team-card active" id="team0Card">
+          <p class="team-name">Team Aurora</p>
+          <p class="team-score" id="team0Score">0</p>
+        </article>
+        <article class="team-card" id="team1Card">
+          <p class="team-name">Team Ember</p>
+          <p class="team-score" id="team1Score">0</p>
+        </article>
+      </section>
+
+      <section class="board">
+        <div class="labels-row">
+          <span id="leftLabel">Hot</span>
+          <span id="rightLabel">Cold</span>
+        </div>
+
+        <div class="wheel-shell" id="wheelShell">
+          <canvas id="spectrumCanvas" class="layer rotatable-spectrum"></canvas>
+          <canvas id="targetCanvas" class="layer rotatable-spectrum"></canvas>
+
+          <div class="cover-layer open" id="coverLayer" aria-hidden="true">
+            <div class="shutter shutter-left"></div>
+            <div class="shutter shutter-right"></div>
+          </div>
+
+          <div class="pointer-layer" id="pointerLayer">
+            <div id="spindle" class="spindle"></div>
+            <div class="pivot"></div>
+          </div>
+
+          <div class="score-popup" id="scorePopup"></div>
+        </div>
+      </section>
+
+      <section class="control-panel">
+        <p class="phase-badge" id="phaseBadge">Psychic View</p>
+        <p class="status-line" id="statusLine">
+          Team Aurora psychic: study the bullseye and give a clue.
+        </p>
+
+        <div class="clue-row">
+          <label for="clueInput">Clue</label>
+          <input
+            id="clueInput"
+            type="text"
+            maxlength="50"
+            placeholder="Type clue (optional)"
+          />
+        </div>
+
+        <div class="actions">
+          <button id="startGuessBtn" class="btn btn-primary">
+            Hide Target &amp; Start Guess
+          </button>
+          <button id="revealBtn" class="btn btn-secondary" disabled>
+            Reveal
+          </button>
+          <button id="nextRoundBtn" class="btn btn-secondary" disabled>
+            Next Round
+          </button>
+          <button id="newGameBtn" class="btn btn-ghost">New Game</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

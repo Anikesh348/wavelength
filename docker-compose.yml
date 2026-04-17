@@ -1,0 +1,9 @@
+services:
+  wavelength:
+    build:
+      context: .
+    image: wavelength:latest
+    container_name: wavelength
+    restart: unless-stopped
+    ports:
+      - "8080:80"

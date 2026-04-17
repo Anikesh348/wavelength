@@ -22,6 +22,16 @@ const DEFAULT_TEAM_NAMES = ["Team Aurora", "Team Ember"];
 const PERSISTENCE_KEY = "wavelength.scoreboard.v1";
 const TARGET_WEDGE_COLORS = ["#e0b247", "#e45b4c", "#5d8fa6", "#e45b4c", "#e0b247"];
 const TARGET_WEDGE_LABELS = ["2", "3", "4", "3", "2"];
+const SCORE_POPUP_VISIBLE_MS = 2400;
+const SCORE_POPUP_FADE_MS = 1100;
+const SCORE_POPUP_OFFSET_PX = 12;
+const AUTO_SPIN_MIN_SPEED = 640;
+const AUTO_SPIN_MAX_SPEED = 920;
+const AUTO_SPIN_STOP_SPEED = 10;
+const AUTO_SPIN_STATIC_FRICTION = 30;
+const AUTO_SPIN_VISCOUS_FRICTION = 0.18;
+const AUTO_SPIN_AERO_DRAG = 0.0012;
+const AUTO_SPIN_PEG_DRAG = 40;
 
 const state = {
   teams: [
@@ -41,9 +51,17 @@ const state = {
     target: 0,
     velocity: 0,
     dragging: false,
+    pointerId: null,
     lastPointerAt: 0,
     lastFrameAt: performance.now(),
     clickStep: 0,
+  },
+  autoSpin: {
+    active: false,
+    speed: 0,
+    direction: 1,
+    lastFrameAt: performance.now(),
+    jitterSeed: 0,
   },
   wheel: {
     w: 0,
@@ -77,10 +95,12 @@ const el = {
   resetRoundBtn: document.getElementById("resetRoundBtn"),
   nextRoundBtn: document.getElementById("nextRoundBtn"),
   newGameBtn: document.getElementById("newGameBtn"),
+  spinWheelBtn: document.getElementById("spinWheelBtn"),
   wheelShell: document.getElementById("wheelShell"),
   pointerLayer: document.getElementById("pointerLayer"),
   spindle: document.getElementById("spindle"),
   coverLayer: document.getElementById("coverLayer"),
+  coverHandleOverlay: document.querySelector(".cover-handle-overlay"),
   scorePopup: document.getElementById("scorePopup"),
   spectrumCanvas: document.getElementById("spectrumCanvas"),
   targetCanvas: document.getElementById("targetCanvas"),
@@ -91,7 +111,12 @@ const targetCtx = el.targetCanvas.getContext("2d");
 
 let audioCtx = null;
 let previousPairIndex = -1;
-let popupTimer = null;
+let popupHideTimer = null;
+let popupCleanupTimer = null;
+let popupTeamIndex = null;
+let pendingScore = null;
+let spinNoiseBuffer = null;
+let spinSoundNodes = null;
 
 function clamp(n, min, max) {
   return Math.min(Math.max(n, min), max);
@@ -136,6 +161,8 @@ function persistScoreboard() {
         name: normalizeTeamName(team.name, DEFAULT_TEAM_NAMES[index]),
         score: Number.isFinite(team.score) ? Math.max(0, Math.floor(team.score)) : 0,
       })),
+      round: Number.isFinite(state.round) ? Math.max(1, Math.floor(state.round)) : 1,
+      currentTeam: Number.isFinite(state.currentTeam) ? Math.floor(state.currentTeam) : 0,
     };
     localStorage.setItem(PERSISTENCE_KEY, JSON.stringify(payload));
   } catch (_error) {
@@ -161,6 +188,13 @@ function loadPersistedScoreboard() {
         ? Math.max(0, Math.floor(Number(team.score) || 0))
         : 0,
   }));
+  if (Number.isFinite(persisted.round) || typeof persisted.round === "string") {
+    state.round = Math.max(1, Math.floor(Number(persisted.round) || 1));
+  }
+  if (Number.isFinite(persisted.currentTeam) || typeof persisted.currentTeam === "string") {
+    const parsedTeamIndex = Math.floor(Number(persisted.currentTeam) || 0);
+    state.currentTeam = clamp(parsedTeamIndex, 0, state.teams.length - 1);
+  }
 }
 
 function angleToTheta(deg) {
@@ -215,6 +249,89 @@ function playRevealSound() {
   osc.stop(now + 0.45);
 }
 
+function getSpinNoiseBuffer() {
+  if (!audioCtx) return null;
+  if (spinNoiseBuffer) return spinNoiseBuffer;
+  const length = Math.floor(audioCtx.sampleRate * 2);
+  const noiseBuffer = audioCtx.createBuffer(1, length, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < length; i += 1) {
+    data[i] = (Math.random() * 2 - 1) * 0.75;
+  }
+  spinNoiseBuffer = noiseBuffer;
+  return spinNoiseBuffer;
+}
+
+function updateSpinSound(speedDegPerSec) {
+  if (!audioCtx || !spinSoundNodes) return;
+  const now = audioCtx.currentTime;
+  const speedRatio = clamp(speedDegPerSec / AUTO_SPIN_MAX_SPEED, 0, 1);
+  const gainTarget = 0.024 + speedRatio * 0.135;
+  const cutoffTarget = 300 + speedRatio * 1060;
+  const resonanceTarget = 0.9 + speedRatio * 2;
+  spinSoundNodes.gain.gain.setTargetAtTime(gainTarget, now, 0.055);
+  spinSoundNodes.filter.frequency.setTargetAtTime(cutoffTarget, now, 0.06);
+  spinSoundNodes.filter.Q.setTargetAtTime(resonanceTarget, now, 0.08);
+}
+
+function stopSpinSound({ fast = false } = {}) {
+  if (!audioCtx || !spinSoundNodes) return;
+  const { source, gain, wobble } = spinSoundNodes;
+  const now = audioCtx.currentTime;
+  const fadeTime = fast ? 0.06 : 0.18;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setTargetAtTime(0.0001, now, fadeTime / 3);
+  const stopAt = now + fadeTime + 0.04;
+  try {
+    source.stop(stopAt);
+  } catch (_error) {
+    // Ignore stop calls on already stopped sources.
+  }
+  try {
+    wobble.stop(stopAt);
+  } catch (_error) {
+    // Ignore stop calls on already stopped oscillators.
+  }
+  spinSoundNodes = null;
+}
+
+function startSpinSound(initialSpeed) {
+  if (!audioCtx) return;
+  stopSpinSound({ fast: true });
+  const noiseBuffer = getSpinNoiseBuffer();
+  if (!noiseBuffer) return;
+  const now = audioCtx.currentTime;
+  const source = audioCtx.createBufferSource();
+  source.buffer = noiseBuffer;
+  source.loop = true;
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.frequency.setValueAtTime(420, now);
+  filter.Q.setValueAtTime(1, now);
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+
+  const wobble = audioCtx.createOscillator();
+  wobble.type = "sine";
+  wobble.frequency.setValueAtTime(7.2, now);
+  const wobbleGain = audioCtx.createGain();
+  wobbleGain.gain.setValueAtTime(80, now);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+  wobble.connect(wobbleGain);
+  wobbleGain.connect(filter.frequency);
+
+  source.start(now);
+  wobble.start(now);
+
+  spinSoundNodes = { source, filter, gain, wobble };
+  updateSpinSound(initialSpeed);
+}
+
 function pickSpectrumPair() {
   let idx = Math.floor(Math.random() * spectrumPairs.length);
   if (idx === previousPairIndex && spectrumPairs.length > 1) {
@@ -224,7 +341,9 @@ function pickSpectrumPair() {
   return spectrumPairs[idx];
 }
 
-function buildRound() {
+function buildRound({ closeCoverInstantly = false } = {}) {
+  stopAutoSpin({ fastSoundOff: true });
+  stopDialDrag();
   const [leftLabel, rightLabel] = pickSpectrumPair();
   state.leftLabel = leftLabel;
   state.rightLabel = rightLabel;
@@ -236,7 +355,7 @@ function buildRound() {
   state.dial.target = 0;
   state.dial.velocity = 0;
   state.dial.clickStep = 0;
-  setCover("closed");
+  setCover("closed", { instant: closeCoverInstantly });
   updateUI();
   drawAll();
 }
@@ -278,7 +397,7 @@ function updateUI() {
     el.startGuessBtn.disabled = true;
     el.revealBtn.disabled = false;
     el.revealBtn.textContent = "Reveal";
-    el.resetRoundBtn.disabled = false;
+    el.resetRoundBtn.disabled = true;
     el.nextRoundBtn.disabled = true;
     el.pointerLayer.classList.remove("locked");
   } else if (state.phase === "reveal") {
@@ -291,7 +410,23 @@ function updateUI() {
     el.pointerLayer.classList.add("locked");
   }
 
+  el.wheelShell.classList.toggle("setup-mode", state.phase === "setup");
+  el.revealBtn.classList.toggle("btn-reveal-live", state.phase === "guessing");
+  syncSpinControls();
+
   persistScoreboard();
+}
+
+function syncSpinControls() {
+  const canSpin = state.phase === "setup";
+  el.wheelShell.classList.toggle("auto-spinning", state.autoSpin.active);
+  if (!el.spinWheelBtn) return;
+  el.spinWheelBtn.hidden = !canSpin;
+  el.spinWheelBtn.setAttribute("aria-hidden", canSpin ? "false" : "true");
+  el.spinWheelBtn.disabled = !canSpin || state.autoSpin.active;
+  el.spinWheelBtn.classList.toggle("is-ready", canSpin && !state.autoSpin.active);
+  el.spinWheelBtn.classList.toggle("is-spinning", state.autoSpin.active);
+  el.spinWheelBtn.setAttribute("aria-busy", state.autoSpin.active ? "true" : "false");
 }
 
 function resizeCanvas(canvas, ctx) {
@@ -310,8 +445,8 @@ function measureWheel() {
   state.wheel.cx = rect.width / 2;
   state.wheel.cy = rect.height * 0.525;
   state.wheel.outerR = Math.min(rect.width * 0.45, rect.height * 0.44);
-  state.wheel.ringOuterR = state.wheel.outerR * 0.92;
-  state.wheel.faceR = state.wheel.outerR * 0.84;
+  state.wheel.ringOuterR = state.wheel.outerR * 0.948;
+  state.wheel.faceR = state.wheel.outerR * 0.836;
   state.wheel.hubR = state.wheel.faceR * 0.2;
   state.wheel.targetInnerR = state.wheel.hubR * 0.86;
   state.wheel.targetOuterR = state.wheel.faceR * 0.95;
@@ -343,6 +478,35 @@ function measureWheel() {
   );
   el.wheelShell.style.setProperty("--spindle-width-px", `${spindleWidth}px`);
 
+  const shellStyle = getComputedStyle(el.wheelShell);
+  const slopeInsetRaw = shellStyle.getPropertyValue("--slope-inset-x").trim();
+  let slopeInsetPx = state.wheel.w * 0.1;
+  if (slopeInsetRaw.endsWith("%")) {
+    const insetPct = Number.parseFloat(slopeInsetRaw);
+    if (Number.isFinite(insetPct)) {
+      slopeInsetPx = (state.wheel.w * insetPct) / 100;
+    }
+  } else if (slopeInsetRaw.endsWith("px")) {
+    const insetPx = Number.parseFloat(slopeInsetRaw);
+    if (Number.isFinite(insetPx)) {
+      slopeInsetPx = insetPx;
+    }
+  }
+
+  // Use the same slope-edge direction as the cover polygon, then intersect with
+  // the circular mask so the handle root sits exactly on the visible cover edge.
+  const slopeEdgeX = state.wheel.w - slopeInsetPx;
+  const slopeEdgeY = state.wheel.slopeSideY;
+  const dirX = slopeEdgeX - state.wheel.cx;
+  const dirY = slopeEdgeY - state.wheel.cy;
+  const dirLen = Math.hypot(dirX, dirY) || 1;
+  const handleAnchorX = state.wheel.cx + (dirX / dirLen) * state.wheel.faceR;
+  const handleAnchorY = state.wheel.cy + (dirY / dirLen) * state.wheel.faceR;
+  el.wheelShell.style.setProperty("--cover-handle-x-px", `${handleAnchorX}px`);
+  el.wheelShell.style.setProperty("--cover-handle-y-px", `${handleAnchorY}px`);
+  const handleAngleDeg = (Math.atan2(dirY, dirX) * 180) / Math.PI;
+  el.wheelShell.style.setProperty("--cover-handle-angle", `${handleAngleDeg}deg`);
+
   const guessLimit = getGuessAngleLimit();
   state.dial.angle = clamp(state.dial.angle, -guessLimit, guessLimit);
   state.dial.target = clamp(state.dial.target, -guessLimit, guessLimit);
@@ -373,14 +537,24 @@ function clampGuessAngle(deg) {
 function paintSpectrumBase(ctx) {
   const { cx, cy, outerR, ringOuterR, faceR } = state.wheel;
 
-  for (let i = 0; i < 86; i += 1) {
-    const t = i / 86;
+  const scallopCount = 36;
+  const scallopRadius = outerR * 0.072;
+  const scallopCenterR = outerR * 0.992;
+
+  // A white undercoat keeps the scallops visually fused to the navy rim.
+  ctx.beginPath();
+  ctx.fillStyle = "#f2eee5";
+  ctx.arc(cx, cy, scallopCenterR + scallopRadius * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+
+  for (let i = 0; i < scallopCount; i += 1) {
+    const t = i / scallopCount;
     const a = t * Math.PI * 2;
-    const sx = cx + Math.cos(a) * (outerR * 1.018);
-    const sy = cy + Math.sin(a) * (outerR * 1.018);
+    const sx = cx + Math.cos(a) * scallopCenterR;
+    const sy = cy + Math.sin(a) * scallopCenterR;
     ctx.beginPath();
     ctx.fillStyle = "#f2eee5";
-    ctx.arc(sx, sy, outerR * 0.048, 0, Math.PI * 2);
+    ctx.arc(sx, sy, scallopRadius, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -412,9 +586,10 @@ function drawSpectrum(rotationDeg) {
   spectrumCtx.restore();
 }
 
-function drawTarget(rotationDeg) {
+function drawTarget(rotationDeg, visible = true) {
   const { w, h, cx, cy, targetInnerR, targetOuterR } = state.wheel;
   targetCtx.clearRect(0, 0, w, h);
+  if (!visible) return;
   targetCtx.save();
   targetCtx.translate(cx, cy);
   targetCtx.rotate((rotationDeg * Math.PI) / 180);
@@ -470,22 +645,147 @@ function drawTarget(rotationDeg) {
 function drawAll() {
   const liveWheelRotation =
     state.phase === "setup" ? state.dial.angle : state.wheelRotation;
+  const targetVisible = state.phase === "psychic" || state.phase === "reveal";
   drawSpectrum(liveWheelRotation);
-  drawTarget(liveWheelRotation);
+  drawTarget(liveWheelRotation, targetVisible);
 }
 
-function setCover(mode) {
+function setCover(mode, { instant = false } = {}) {
+  const transitionTargets = [el.coverLayer, el.coverHandleOverlay].filter(Boolean);
+
+  if (instant) {
+    transitionTargets.forEach((target) => {
+      target.style.transition = "none";
+    });
+    // Ensure transitions are disabled before changing state.
+    void el.coverLayer.offsetHeight;
+  }
+
   el.coverLayer.classList.remove("open", "closed");
   el.coverLayer.classList.add(mode);
+
+  if (instant) {
+    // Commit the new transform, then restore transitions for future interactions.
+    void el.coverLayer.offsetHeight;
+    transitionTargets.forEach((target) => {
+      target.style.transition = "";
+    });
+  }
 }
 
-function showScorePopup(points, label) {
-  if (popupTimer) clearTimeout(popupTimer);
+function startAutoSpin() {
+  if (state.phase !== "setup") return;
+  initAudio();
+  stopDialDrag();
+  stopAutoSpin({ fastSoundOff: true });
+
+  state.autoSpin.active = true;
+  state.autoSpin.direction = Math.random() < 0.5 ? 1 : -1;
+  state.autoSpin.speed = randomBetween(AUTO_SPIN_MIN_SPEED, AUTO_SPIN_MAX_SPEED);
+  state.autoSpin.lastFrameAt = performance.now();
+  state.autoSpin.jitterSeed = Math.random() * Math.PI * 2;
+  state.dial.target = state.dial.angle;
+  state.dial.velocity = 0;
+  state.dial.clickStep = Math.round(state.dial.angle / 3.2);
+
+  startSpinSound(state.autoSpin.speed);
+  syncSpinControls();
+}
+
+function stopAutoSpin({ fastSoundOff = false } = {}) {
+  if (!state.autoSpin.active && !spinSoundNodes) return;
+  state.autoSpin.active = false;
+  state.autoSpin.speed = 0;
+  state.autoSpin.lastFrameAt = performance.now();
+  stopSpinSound({ fast: fastSoundOff });
+  syncSpinControls();
+}
+
+function updateAutoSpin(now) {
+  if (!state.autoSpin.active) return;
+  if (state.phase !== "setup") {
+    stopAutoSpin({ fastSoundOff: true });
+    return;
+  }
+
+  const dt = clamp((now - state.autoSpin.lastFrameAt) / 1000, 1 / 240, 0.05);
+  state.autoSpin.lastFrameAt = now;
+
+  const speed = state.autoSpin.speed;
+  const speedRatio = clamp(speed / AUTO_SPIN_MAX_SPEED, 0, 1);
+  const chatter =
+    Math.sin(now * 0.021 + state.autoSpin.jitterSeed + state.dial.angle * 0.17) *
+    28 *
+    speedRatio;
+  state.dial.angle += state.autoSpin.direction * (speed + chatter) * dt;
+  state.dial.target = state.dial.angle;
+  state.dial.velocity = 0;
+
+  const pegDrag =
+    Math.abs(Math.sin((state.dial.angle + state.autoSpin.jitterSeed * 42) * (Math.PI / 11.5))) *
+    AUTO_SPIN_PEG_DRAG *
+    speedRatio;
+  const decel =
+    AUTO_SPIN_STATIC_FRICTION +
+    AUTO_SPIN_VISCOUS_FRICTION * speed +
+    AUTO_SPIN_AERO_DRAG * speed * speed +
+    pegDrag;
+  state.autoSpin.speed = Math.max(0, speed - decel * dt);
+  updateSpinSound(state.autoSpin.speed);
+
+  if (state.autoSpin.speed <= AUTO_SPIN_STOP_SPEED) {
+    stopAutoSpin();
+  }
+}
+
+function clearScorePopupTimers() {
+  if (popupHideTimer) {
+    clearTimeout(popupHideTimer);
+    popupHideTimer = null;
+  }
+  if (popupCleanupTimer) {
+    clearTimeout(popupCleanupTimer);
+    popupCleanupTimer = null;
+  }
+}
+
+function applyPendingScore() {
+  if (!pendingScore) return;
+  state.teams[pendingScore.teamIndex].score += pendingScore.points;
+  pendingScore = null;
+  updateUI();
+}
+
+function positionScorePopup(teamIndex) {
+  const teamCard = teamIndex === 1 ? el.team1Card : el.team0Card;
+  if (!teamCard) return;
+  const rect = teamCard.getBoundingClientRect();
+  const popupLeft = rect.left + rect.width * 0.5;
+  const popupTop = rect.bottom + SCORE_POPUP_OFFSET_PX;
+  el.scorePopup.style.setProperty("--score-popup-left-px", `${popupLeft}px`);
+  el.scorePopup.style.setProperty("--score-popup-top-px", `${popupTop}px`);
+}
+
+function showScorePopup(points, label, teamIndex) {
+  // If a previous popup was interrupted, settle its points first.
+  applyPendingScore();
+  clearScorePopupTimers();
+  popupTeamIndex = teamIndex;
+  pendingScore = { teamIndex, points };
+  positionScorePopup(teamIndex);
   el.scorePopup.textContent = `${label} +${points}`;
+  el.scorePopup.classList.remove("hiding");
   el.scorePopup.classList.add("show");
-  popupTimer = setTimeout(() => {
+
+  popupHideTimer = setTimeout(() => {
     el.scorePopup.classList.remove("show");
-  }, 3400);
+    el.scorePopup.classList.add("hiding");
+    popupCleanupTimer = setTimeout(() => {
+      el.scorePopup.classList.remove("hiding");
+      popupTeamIndex = null;
+      applyPendingScore();
+    }, SCORE_POPUP_FADE_MS);
+  }, SCORE_POPUP_VISIBLE_MS);
 }
 
 function calculateScore() {
@@ -529,10 +829,44 @@ function readPointerSpinAngle(clientX, clientY) {
   return (Math.atan2(dy, dx) * 180) / Math.PI;
 }
 
+function isPrimarySpinPointer(event) {
+  if (!event.isPrimary) return false;
+  if (event.pointerType === "mouse") {
+    return event.button === 0;
+  }
+  return true;
+}
+
+function stopDialDrag(pointerId = state.dial.pointerId) {
+  if (pointerId !== null && el.pointerLayer.hasPointerCapture(pointerId)) {
+    try {
+      el.pointerLayer.releasePointerCapture(pointerId);
+    } catch (_error) {
+      // Capture may already be released by the browser.
+    }
+  }
+  state.dial.dragging = false;
+  state.dial.pointerId = null;
+  if (state.phase === "setup") {
+    state.dial.target = state.dial.angle;
+    state.dial.velocity = 0;
+  }
+  el.pointerLayer.classList.remove("dragging");
+}
+
 function pointerDown(event) {
   if (state.phase !== "guessing" && state.phase !== "setup") return;
+  if (state.phase === "setup" && state.autoSpin.active) {
+    stopAutoSpin({ fastSoundOff: true });
+  }
+  if (state.dial.dragging) {
+    stopDialDrag();
+  }
+  if (!isPrimarySpinPointer(event)) return;
+  event.preventDefault();
   initAudio();
   state.dial.dragging = true;
+  state.dial.pointerId = event.pointerId;
   state.dial.lastFrameAt = performance.now();
   if (state.phase === "setup") {
     state.dial.lastPointerAt = readPointerSpinAngle(event.clientX, event.clientY);
@@ -544,20 +878,32 @@ function pointerDown(event) {
     state.dial.target = angle;
   }
   el.pointerLayer.classList.add("dragging");
+  try {
+    el.pointerLayer.setPointerCapture(event.pointerId);
+  } catch (_error) {
+    // Some browsers can throw if capture is unavailable; fallback listeners handle release.
+  }
 }
 
 function pointerMove(event) {
   if (
     !state.dial.dragging ||
+    event.pointerId !== state.dial.pointerId ||
     (state.phase !== "guessing" && state.phase !== "setup")
   ) {
     return;
   }
+  event.preventDefault();
+  const samples = event.getCoalescedEvents ? event.getCoalescedEvents() : null;
+  const source =
+    Array.isArray(samples) && samples.length > 0 ? samples[samples.length - 1] : event;
+
   const now = performance.now();
   if (state.phase === "setup") {
-    const spinAngle = readPointerSpinAngle(event.clientX, event.clientY);
+    const spinAngle = readPointerSpinAngle(source.clientX, source.clientY);
     const delta = signedAngularDelta(state.dial.lastPointerAt, spinAngle);
-    state.dial.angle += delta * SETUP_PUSH_GAIN;
+    const limitedDelta = clamp(delta, -16, 16);
+    state.dial.angle += limitedDelta * SETUP_PUSH_GAIN;
     state.dial.target = state.dial.angle;
     state.dial.velocity = 0;
     state.dial.lastPointerAt = spinAngle;
@@ -565,27 +911,26 @@ function pointerMove(event) {
     return;
   }
 
-  const dt = Math.max(16, now - state.dial.lastFrameAt);
-  const angle = readPointerAngle(event.clientX, event.clientY);
+  const dt = clamp(now - state.dial.lastFrameAt, 8, 40);
+  const angle = readPointerAngle(source.clientX, source.clientY);
   state.dial.target = angle;
-  const delta = angle - state.dial.lastPointerAt;
-  state.dial.velocity = clamp(delta / (dt / 16.7), -6.5, 6.5) * 0.38;
+  const delta = signedAngularDelta(state.dial.lastPointerAt, angle);
+  state.dial.velocity = clamp(delta / (dt / 16.7), -5.4, 5.4) * 0.3;
   state.dial.lastPointerAt = angle;
   state.dial.lastFrameAt = now;
 }
 
-function pointerUp() {
+function pointerUp(event) {
   if (!state.dial.dragging) return;
-  state.dial.dragging = false;
-  if (state.phase === "setup") {
-    state.dial.target = state.dial.angle;
-    state.dial.velocity = 0;
+  if (event && event.pointerId !== undefined && event.pointerId !== state.dial.pointerId) {
+    return;
   }
-  el.pointerLayer.classList.remove("dragging");
+  stopDialDrag();
 }
 
-function tick() {
+function tick(now = performance.now()) {
   if (state.phase === "setup") {
+    updateAutoSpin(now);
     const clickStep = Math.round(state.dial.angle / 3.2);
     if (clickStep !== state.dial.clickStep) {
       state.dial.clickStep = clickStep;
@@ -597,11 +942,11 @@ function tick() {
     return;
   }
 
-  const spring = state.dial.dragging ? 0.42 : 0.16;
+  const spring = state.dial.dragging ? 0.3 : 0.15;
   const limit = getGuessAngleLimit();
   state.dial.target = clamp(state.dial.target, -limit, limit);
   state.dial.velocity += (state.dial.target - state.dial.angle) * spring;
-  state.dial.velocity *= state.dial.dragging ? 0.62 : 0.84;
+  state.dial.velocity *= state.dial.dragging ? 0.72 : 0.86;
   state.dial.angle += state.dial.velocity;
   state.dial.angle = clamp(state.dial.angle, -limit, limit);
 
@@ -631,6 +976,8 @@ function tick() {
 
 function startGuessing() {
   if (state.phase !== "psychic") return;
+  stopAutoSpin({ fastSoundOff: true });
+  stopDialDrag();
   state.phase = "guessing";
   state.dial.angle = 0;
   state.dial.target = 0;
@@ -643,6 +990,8 @@ function startGuessing() {
 function reveal() {
   if (state.phase === "setup") {
     initAudio();
+    stopAutoSpin({ fastSoundOff: true });
+    stopDialDrag();
     state.dial.target = state.dial.angle;
     state.dial.velocity = 0;
     state.wheelRotation = state.dial.angle;
@@ -656,46 +1005,57 @@ function reveal() {
 
   if (state.phase !== "guessing") return;
   initAudio();
+  stopAutoSpin({ fastSoundOff: true });
+  stopDialDrag();
   state.dial.target = state.dial.angle;
   state.dial.velocity = 0;
   state.phase = "reveal";
   setCover("open");
   playRevealSound();
   const result = calculateScore();
-  state.teams[state.currentTeam].score += result.points;
-  showScorePopup(result.points, result.label);
+  showScorePopup(result.points, result.label, state.currentTeam);
   updateUI();
   drawAll();
 }
 
 function nextRound() {
   if (state.phase !== "reveal") return;
-  state.currentTeam = state.currentTeam === 0 ? 1 : 0;
-  state.round += 1;
+  const nextTeam = (state.currentTeam + 1) % state.teams.length;
+  if (nextTeam === 0) {
+    state.round += 1;
+  }
+  state.currentTeam = nextTeam;
   buildRound();
 }
 
 function resetRound() {
-  if (state.phase !== "psychic" && state.phase !== "guessing") return;
+  if (state.phase !== "psychic") return;
+  stopAutoSpin({ fastSoundOff: true });
   state.phase = "setup";
-  state.dial.dragging = false;
+  stopDialDrag();
   state.dial.angle = state.wheelRotation;
   state.dial.target = state.wheelRotation;
   state.dial.velocity = 0;
   state.dial.clickStep = Math.round(state.dial.angle / 3.2);
-  setCover("closed");
-  if (popupTimer) {
-    clearTimeout(popupTimer);
-    popupTimer = null;
-  }
+  setCover("closed", { instant: true });
+  clearScorePopupTimers();
+  popupTeamIndex = null;
+  pendingScore = null;
   el.scorePopup.classList.remove("show");
-  el.pointerLayer.classList.remove("dragging");
+  el.scorePopup.classList.remove("hiding");
   updateNeedle();
   updateUI();
   drawAll();
 }
 
 function newGame() {
+  stopAutoSpin({ fastSoundOff: true });
+  stopDialDrag();
+  clearScorePopupTimers();
+  popupTeamIndex = null;
+  pendingScore = null;
+  el.scorePopup.classList.remove("show");
+  el.scorePopup.classList.remove("hiding");
   clearPersistedScoreboard();
   state.teams[0].name = DEFAULT_TEAM_NAMES[0];
   state.teams[1].name = DEFAULT_TEAM_NAMES[1];
@@ -703,7 +1063,7 @@ function newGame() {
   state.teams[1].score = 0;
   state.currentTeam = 0;
   state.round = 1;
-  buildRound();
+  buildRound({ closeCoverInstantly: true });
 }
 
 function attachEvents() {
@@ -711,17 +1071,39 @@ function attachEvents() {
     resizeCanvas(el.spectrumCanvas, spectrumCtx);
     resizeCanvas(el.targetCanvas, targetCtx);
     measureWheel();
+    if (popupTeamIndex !== null) {
+      positionScorePopup(popupTeamIndex);
+    }
     drawAll();
   });
 
   el.pointerLayer.addEventListener("pointerdown", (event) => {
     if (state.phase !== "guessing" && state.phase !== "setup") return;
     pointerDown(event);
-    el.pointerLayer.setPointerCapture(event.pointerId);
   });
   el.pointerLayer.addEventListener("pointermove", pointerMove);
   el.pointerLayer.addEventListener("pointerup", pointerUp);
   el.pointerLayer.addEventListener("pointercancel", pointerUp);
+  el.pointerLayer.addEventListener("lostpointercapture", pointerUp);
+  window.addEventListener("pointerup", pointerUp);
+  window.addEventListener("pointercancel", pointerUp);
+  window.addEventListener("blur", () => {
+    stopAutoSpin({ fastSoundOff: true });
+    stopDialDrag();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopAutoSpin({ fastSoundOff: true });
+      stopDialDrag();
+    }
+  });
+
+  if (el.spinWheelBtn) {
+    el.spinWheelBtn.addEventListener("click", () => {
+      if (state.phase !== "setup") return;
+      startAutoSpin();
+    });
+  }
 
   el.startGuessBtn.addEventListener("click", () => {
     initAudio();

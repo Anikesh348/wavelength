@@ -61,9 +61,18 @@
             <canvas id="targetCanvas" class="layer rotatable-spectrum"></canvas>
 
             <div class="cover-layer open" id="coverLayer" aria-hidden="true">
-              <div class="shutter shutter-left"></div>
-              <div class="shutter shutter-right"></div>
+              <div class="cover-panel"></div>
             </div>
+            <div class="cover-handle-overlay" aria-hidden="true"></div>
+            <button
+              id="spinWheelBtn"
+              class="spin-wheel-btn"
+              type="button"
+              aria-label="Spin the wheel"
+            >
+              <span class="spin-wheel-btn-icon" aria-hidden="true">&#8635;</span>
+              <span class="spin-wheel-btn-label">Spin</span>
+            </button>
 
             <div class="pointer-layer" id="pointerLayer">
               <div id="spindle" class="spindle"></div>

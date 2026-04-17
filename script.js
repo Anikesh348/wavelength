@@ -32,6 +32,11 @@ const AUTO_SPIN_STATIC_FRICTION = 30;
 const AUTO_SPIN_VISCOUS_FRICTION = 0.18;
 const AUTO_SPIN_AERO_DRAG = 0.0012;
 const AUTO_SPIN_PEG_DRAG = 40;
+const MEME_SOUND_SOURCES = Object.freeze({
+  win: "./assets/sounds/7_crore_meme_sound_kbc.mp3",
+  lose: "./assets/sounds/faaa.mp3",
+});
+const MEME_SOUND_VOLUME = 1;
 
 const state = {
   teams: [
@@ -117,6 +122,7 @@ let popupTeamIndex = null;
 let pendingScore = null;
 let spinNoiseBuffer = null;
 let spinSoundNodes = null;
+let activeMemeAudio = null;
 
 function clamp(n, min, max) {
   return Math.min(Math.max(n, min), max);
@@ -249,6 +255,101 @@ function playRevealSound() {
   osc.stop(now + 0.45);
 }
 
+function primeMemeSounds() {
+  if (typeof window.Audio !== "function") return;
+  Object.values(MEME_SOUND_SOURCES).forEach((src) => {
+    const clip = new Audio(src);
+    clip.preload = "auto";
+    clip.volume = MEME_SOUND_VOLUME;
+    clip.load();
+  });
+}
+
+function stopMemeSound() {
+  if (!activeMemeAudio) return;
+  try {
+    activeMemeAudio.pause();
+    activeMemeAudio.currentTime = 0;
+  } catch (_error) {
+    // Ignore teardown errors from stale/failed audio elements.
+  }
+  activeMemeAudio = null;
+}
+
+function playMemeFallback(kind) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  if (kind === "win") {
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(420, now);
+    osc.frequency.exponentialRampToValueAtTime(940, now + 0.18);
+    osc.frequency.exponentialRampToValueAtTime(1240, now + 0.3);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.11, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.45);
+    return;
+  }
+
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(360, now);
+  osc.frequency.exponentialRampToValueAtTime(160, now + 0.18);
+  osc.frequency.exponentialRampToValueAtTime(96, now + 0.38);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.46);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.48);
+}
+
+function playMemeSound(kind) {
+  const src = MEME_SOUND_SOURCES[kind];
+  if (!src || typeof window.Audio !== "function") {
+    playMemeFallback(kind);
+    return;
+  }
+  stopMemeSound();
+  const clip = new Audio(src);
+  clip.preload = "auto";
+  clip.volume = MEME_SOUND_VOLUME;
+  activeMemeAudio = clip;
+
+  const clearIfActive = () => {
+    if (activeMemeAudio === clip) {
+      activeMemeAudio = null;
+    }
+  };
+
+  clip.addEventListener("ended", clearIfActive, { once: true });
+  clip.addEventListener(
+    "error",
+    () => {
+      clearIfActive();
+      playMemeFallback(kind);
+    },
+    { once: true }
+  );
+
+  const playPromise = clip.play();
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch(() => {
+      clearIfActive();
+      playMemeFallback(kind);
+    });
+  }
+}
+
+function playRoundResultMeme(points) {
+  playMemeSound(points > 0 ? "win" : "lose");
+}
+
 function getSpinNoiseBuffer() {
   if (!audioCtx) return null;
   if (spinNoiseBuffer) return spinNoiseBuffer;
@@ -343,6 +444,7 @@ function pickSpectrumPair() {
 
 function buildRound({ closeCoverInstantly = false } = {}) {
   stopAutoSpin({ fastSoundOff: true });
+  stopMemeSound();
   stopDialDrag();
   const [leftLabel, rightLabel] = pickSpectrumPair();
   state.leftLabel = leftLabel;
@@ -977,6 +1079,7 @@ function tick(now = performance.now()) {
 function startGuessing() {
   if (state.phase !== "psychic") return;
   stopAutoSpin({ fastSoundOff: true });
+  stopMemeSound();
   stopDialDrag();
   state.phase = "guessing";
   state.dial.angle = 0;
@@ -991,6 +1094,7 @@ function reveal() {
   if (state.phase === "setup") {
     initAudio();
     stopAutoSpin({ fastSoundOff: true });
+    stopMemeSound();
     stopDialDrag();
     state.dial.target = state.dial.angle;
     state.dial.velocity = 0;
@@ -1006,13 +1110,14 @@ function reveal() {
   if (state.phase !== "guessing") return;
   initAudio();
   stopAutoSpin({ fastSoundOff: true });
+  stopMemeSound();
   stopDialDrag();
   state.dial.target = state.dial.angle;
   state.dial.velocity = 0;
   state.phase = "reveal";
   setCover("open");
-  playRevealSound();
   const result = calculateScore();
+  playRoundResultMeme(result.points);
   showScorePopup(result.points, result.label, state.currentTeam);
   updateUI();
   drawAll();
@@ -1031,6 +1136,7 @@ function nextRound() {
 function resetRound() {
   if (state.phase !== "psychic") return;
   stopAutoSpin({ fastSoundOff: true });
+  stopMemeSound();
   state.phase = "setup";
   stopDialDrag();
   state.dial.angle = state.wheelRotation;
@@ -1050,6 +1156,7 @@ function resetRound() {
 
 function newGame() {
   stopAutoSpin({ fastSoundOff: true });
+  stopMemeSound();
   stopDialDrag();
   clearScorePopupTimers();
   popupTeamIndex = null;
@@ -1089,11 +1196,13 @@ function attachEvents() {
   window.addEventListener("pointercancel", pointerUp);
   window.addEventListener("blur", () => {
     stopAutoSpin({ fastSoundOff: true });
+    stopMemeSound();
     stopDialDrag();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       stopAutoSpin({ fastSoundOff: true });
+      stopMemeSound();
       stopDialDrag();
     }
   });
@@ -1130,6 +1239,7 @@ function attachEvents() {
 
 function boot() {
   loadPersistedScoreboard();
+  primeMemeSounds();
   resizeCanvas(el.spectrumCanvas, spectrumCtx);
   resizeCanvas(el.targetCanvas, targetCtx);
   measureWheel();
